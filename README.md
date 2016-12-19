@@ -1,8 +1,6 @@
 # Swiftlocalizer
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/swiftlocalizer`. To experiment with that code, run `bin/console` for an interactive prompt.
-
-TODO: Delete this and the text above, and describe your gem
+Swiftのソースコードに含まれる「NSLocalizedString("This is label1", comment: "これはラベル1")」のような文字列を検索して、Localizable.stringsを生成するスクリプト。
 
 ## Installation
 
@@ -22,7 +20,7 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+    $ swiftlocalizer ~/swiftproject
 
 ## Development
 
