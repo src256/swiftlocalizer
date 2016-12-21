@@ -16,12 +16,43 @@ module Swiftlocalizer
       "#{@en},#{@ja},#{@filename},#{@lineno}"
     end
 
+    def str_and_lineno
+      "#{@filename}: #{@en} #{@ja}"
+    end
+
     def to_short_s
       "#{@en} #{@ja} #{File.basename(@filename)}:#{@lineno}"
-    end    
+    end
+
+    def key
+      @en
+    end
+  end
+
+  class LocalizableString
+    def initialize(str, filename, lineno)
+      @str = str
+      @filename = filename
+      @lineno = lineno
+    end
+    attr_accessor :str, :filename, :lineno
+    def to_s
+      "#{@str},#{@filename},#{@lineno}"
+    end
+    def str_and_lineno
+      "#{@lineno}: #{@str}"
+    end
+    def to_short_s
+      "#{@str} #{File.basename(@filename)}:#{@lineno}"
+    end        
   end
 
   class Command
+
+    NSLOCALIZED_STRING_REGEX = /NSLocalizedString\("([^"]+)",\s*comment:\s*"([^"]+)"\)/
+    PRINT_REGEX = /print\("([^"]+)"\)/
+    COMMENT_REGEX = /\/\/.*$/
+    
     def self.get_localized_strings_from_file(file)
       get_localized_strings_from_lines(File.readlines(file), file)
     end
@@ -29,19 +60,56 @@ module Swiftlocalizer
     def self.get_localized_strings_from_lines(lines, file)
       strings = []
       lines.each_with_index do |line, index|
-        strings.concat(get_localized_strings_from_line(line, file, index))
+        strings.concat(get_localized_strings_from_line(line, file, index + 1))
       end
       strings
     end
-
-    def self.get_localized_strings_from_line(line, file, index)
+    
+    def self.get_localized_strings_from_line(line, file, lineno)
       strings = []
-      while line =~ /NSLocalizedString\("([^"]+)",\s*comment:\s*"([^"]+)"\)/
-        string = LocalizedString.new($1, $2, file, index)
+      while line =~ NSLOCALIZED_STRING_REGEX
+        string = LocalizedString.new($1, $2, file, lineno)
         strings << string
         line = $'
       end
       strings
+    end
+
+    def self.get_localizable_strings_from_file(file)
+      get_localizable_strings_from_lines(File.readlines(file), file)
+    end
+
+    def self.get_localizable_strings_from_lines(lines, file)
+      strings = []
+      lines.each_with_index do |line, index|
+        strings.concat(get_localizable_strings_from_line(line, file, index + 1))
+      end
+      strings
+    end
+
+    def self.get_localizable_strings_from_line(line, file, lineno)
+      strings = []
+      matched = true
+      while matched 
+        if line =~ NSLOCALIZED_STRING_REGEX || line =~ PRINT_REGEX || line =~ COMMENT_REGEX
+          line = $'
+          next
+        end
+        if line =~ /"([^"]+)"/
+          if jstring?($1)
+            string = LocalizableString.new($1, file, lineno)
+            strings << string
+          end
+          line = $'
+        else
+          matched = false
+        end
+      end
+      strings      
+    end
+
+    def self.jstring?(str)
+      str.bytesize > str.size
     end
     
     def self.run(argv)
@@ -58,7 +126,7 @@ module Swiftlocalizer
       end
       opt.on('-v', '--verbose', 'Verbose message') {|v| opts[:v] = v}
       opt.on('-n', '--dry-run', 'Message only') {|v| opts[:n] = v}
-#      opt.on('-f', '--force-import', 'Force import') {|v| opts[:f] = v}
+      opt.on('-c', '--check', 'Check localizable strings') {|v| opts[:c] = v}
       opt.parse!(argv)
       dir = ARGV.shift || '.'
       command = Command.new(opts, dir)
@@ -71,7 +139,24 @@ module Swiftlocalizer
     end
 
     def run
-      strings = scan_sources
+      if @opts[:c]
+        check_strings
+      else
+        scan_and_write
+      end
+    end
+
+    private
+    def check_strings
+      strings = scan_sources do |f|
+        Command.get_localizable_strings_from_file(f)
+      end
+    end
+    
+    def scan_and_write
+      strings = scan_sources do |f|
+        Command.get_localized_strings_from_file(f)
+      end
 
       check_duplicate(strings)
       
@@ -81,18 +166,17 @@ module Swiftlocalizer
       write_localizable_strings(strings, path, :en)
       
       path = File.join(@dir, 'ja.lproj', basename)      
-      write_localizable_strings(strings, path, :ja)
+      write_localizable_strings(strings, path, :ja)      
     end
-
-    private
+    
     def scan_sources
       puts "Scan #{@dir}"  
       strings = []
       Dir.glob(@dir + '/**/*.swift').each do |f|
         puts f
-        file_strings = Command.get_localized_strings_from_file(f)
+        file_strings = yield(f)
         puts "retrieve #{file_strings.size} strings"
-        file_strings.each{|str| puts "\t#{str.en} #{str.ja} #{str.lineno}\n"}
+        file_strings.each{|str| puts "\t#{str.str_and_lineno}\n"}
         strings.concat(file_strings)
       end
       strings
@@ -117,7 +201,7 @@ module Swiftlocalizer
         raise RuntimeError, "#{path} doesn't exist."
       end
       File.open(path, 'w') do |f|
-        strings.each do |str|
+        strings.sort_by{|a| a.key }.each do |str|
           en = str.send(:en)
           localized = str.send(sym.to_sym)
           f.puts "\"#{en}\" = \"#{localized}\";"
